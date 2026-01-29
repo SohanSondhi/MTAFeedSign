@@ -7,14 +7,33 @@ Project layout
 MTAFeedSign/
 ├── README.md
 └── esp32/
+    ├── .gitignore
     ├── platformio.ini
-    ├── src/
-    │   └── main.cpp
-    └── lib/
-        └── nanopb/
-            ├── nanopb_src/
-            ├── proto/
-            └── gen/
+    ├── .pio/
+    ├── .vscode/
+    ├── lib/
+    │   └── nanopb/
+    │       ├── pb_common.c
+    │       ├── pb_common.h
+    │       ├── pb_decode.c
+    │       ├── pb_decode.h
+    │       ├── pb_encode.c
+    │       ├── pb_encode.h
+    │       └── pb.h
+    ├── proto/
+    │   ├── gtfs-realtime.options
+    │   └── gtfs-realtime.proto
+    └── src/
+        ├── gtfs-realtime.pb.c
+        ├── gtfs-realtime.pb.h
+        ├── main.cpp
+        ├── MTAFeed.cpp
+        ├── MTAFeed.h
+        ├── TimeSync.cpp
+        ├── TimeSync.h
+        ├── wifi_secrets.h
+        ├── WiFiManager.cpp
+        └── WiFiManager.h
 ```
 
 Useful links
@@ -23,6 +42,6 @@ Useful links
 
 Notes
 
-- This repository currently contains a minimal ESP32 project skeleton; add real nanopb sources and your .proto files under `esp32/lib/nanopb`.
+- You will have to add your Wifi SSID and Password, reccomend making a file called wifi_secrets.h its what I used and is already included in the .gitignore
 
 ```

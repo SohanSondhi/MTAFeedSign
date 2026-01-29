@@ -1,0 +1,41 @@
+# --- Keep memory tiny: stream repeated fields using callbacks (no giant arrays) ---
+
+# FeedMessage.entity is repeated and can be huge -> decode as a callback stream
+transit_realtime.FeedMessage.entity type: FT_CALLBACK
+
+# FeedEntity: ignore everything except trip_update
+transit_realtime.FeedEntity.alert type: FT_IGNORE
+transit_realtime.FeedEntity.vehicle type: FT_IGNORE
+transit_realtime.FeedEntity.shape type: FT_IGNORE
+transit_realtime.FeedEntity.stop type: FT_IGNORE
+transit_realtime.FeedEntity.trip_modifications type: FT_IGNORE
+
+# TripDescriptor: configure fields directly (not via TripUpdate.trip.*)
+transit_realtime.TripDescriptor.trip_id max_size: 32
+transit_realtime.TripDescriptor.route_id type: FT_IGNORE
+transit_realtime.TripDescriptor.direction_id type: FT_IGNORE
+transit_realtime.TripDescriptor.start_time type: FT_IGNORE
+transit_realtime.TripDescriptor.start_date type: FT_IGNORE
+transit_realtime.TripDescriptor.schedule_relationship type: FT_IGNORE
+transit_realtime.TripDescriptor.modified_trip type: FT_IGNORE
+
+# TripUpdate: ignore non-essential fields
+transit_realtime.TripUpdate.vehicle type: FT_IGNORE
+transit_realtime.TripUpdate.timestamp type: FT_IGNORE
+transit_realtime.TripUpdate.delay type: FT_IGNORE
+transit_realtime.TripUpdate.trip_properties type: FT_IGNORE
+
+# TripUpdate.stop_time_update repeats -> stream it too
+transit_realtime.TripUpdate.stop_time_update type: FT_CALLBACK
+
+# StopTimeUpdate: keep stop_id + arrival/departure time only
+transit_realtime.TripUpdate.StopTimeUpdate.stop_sequence type: FT_IGNORE
+transit_realtime.TripUpdate.StopTimeUpdate.schedule_relationship type: FT_IGNORE
+
+# stop_id is small (A41N, F18S, etc.)
+transit_realtime.TripUpdate.StopTimeUpdate.stop_id max_size: 16
+
+# StopTimeEvent: keep only absolute time
+transit_realtime.TripUpdate.StopTimeEvent.delay type: FT_IGNORE
+transit_realtime.TripUpdate.StopTimeEvent.uncertainty type: FT_IGNORE
+transit_realtime.TripUpdate.StopTimeEvent.scheduled_time type: FT_IGNORE
