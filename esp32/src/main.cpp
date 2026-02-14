@@ -7,8 +7,8 @@
 // Feed URLs for different subway lines
 static const char* URL_ACE =
   "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace";
-static const char* URL_F =
-  "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-f";
+static const char* URL_BDFM =
+  "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm";
 
 // Station list for carousel
 struct Station {
@@ -18,9 +18,9 @@ struct Station {
 };
 
 static const Station STATIONS[] = {
-  {"Jay St A/C North", "A41N", URL_ACE},   // Jay Street MetroTech A/C Northbound
-  {"York St F North", "F20N", URL_F},       // York Street F Northbound  
-  {"Jay St F North", "F27N", URL_F}         // Jay Street MetroTech F Northbound
+  {"Jay St A/C North", "A41N", URL_ACE},    // Jay Street MetroTech A/C Northbound
+  {"York St F North",  "F20N", URL_BDFM},   // York Street F Northbound  
+  {"Jay St F North",   "F27N", URL_BDFM}    // Jay Street MetroTech F Northbound
 };
 static const int NUM_STATIONS = sizeof(STATIONS) / sizeof(STATIONS[0]);
 

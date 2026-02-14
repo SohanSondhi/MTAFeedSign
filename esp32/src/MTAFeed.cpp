@@ -9,9 +9,6 @@
 Arrival MTAFeed::arrivals[MTAFeed::MAX_ARRIVALS];
 int MTAFeed::count = 0;
 
-static const size_t FEED_BUF_CAP = 70000;
-static uint8_t FEED_BUF[FEED_BUF_CAP];
-
 void MTAFeed::resetArrivals() {
   count = 0;
   for (int i = 0; i < MAX_ARRIVALS; i++) {
@@ -21,18 +18,42 @@ void MTAFeed::resetArrivals() {
   }
 }
 
-static int fetchFeedBytes(const char* url, uint8_t* outBuf, size_t cap) {
+// Fetches the protobuf feed into a heap-allocated buffer.
+// On success, sets *outBuf and *outLen and returns true.  Caller must free(*outBuf).
+// On failure, returns false and *outBuf is nullptr.
+static bool fetchFeedBytes(const char* url, uint8_t** outBuf, size_t* outLen) {
+  *outBuf = nullptr;
+  *outLen = 0;
+
   WiFiClientSecure client;
   client.setInsecure();
 
   HTTPClient http;
-  if (!http.begin(client, url)) return -1;
+  if (!http.begin(client, url)) return false;
 
   http.addHeader("Accept", "application/x-protobuf");
   int code = http.GET();
   if (code != 200) {
+    Serial.printf("HTTP %d\n", code);
     http.end();
-    return -2;
+    return false;
+  }
+
+  int contentLen = http.getSize();  // -1 if chunked
+  size_t cap;
+  if (contentLen > 0) {
+    cap = (size_t)contentLen;
+  } else {
+    // Unknown size — use 75% of free heap as upper bound, capped at 140 KB
+    size_t heapBudget = (ESP.getFreeHeap() * 3) / 4;
+    cap = min(heapBudget, (size_t)140000);
+  }
+
+  uint8_t* buf = (uint8_t*)malloc(cap);
+  if (!buf) {
+    Serial.printf("Alloc %u failed (free: %u)\n", (unsigned)cap, ESP.getFreeHeap());
+    http.end();
+    return false;
   }
 
   WiFiClient* stream = http.getStreamPtr();
@@ -42,26 +63,34 @@ static int fetchFeedBytes(const char* url, uint8_t* outBuf, size_t cap) {
   while (http.connected()) {
     size_t avail = stream->available();
     if (avail) {
-      uint8_t tmp[512];
-      int toRead = (int)min(avail, sizeof(tmp));
-      int r = stream->readBytes(tmp, toRead);
+      size_t toRead = min(avail, (size_t)512);
+      if (total + toRead > cap) {
+        Serial.printf("Feed too large (>%u)\n", (unsigned)cap);
+        free(buf);
+        http.end();
+        return false;
+      }
+      int r = stream->readBytes(buf + total, toRead);
       if (r > 0) {
-        if (total + (size_t)r > cap) {
-          http.end();
-          return -3; // buffer too small
-        }
-        memcpy(outBuf + total, tmp, (size_t)r);
         total += (size_t)r;
         lastRead = millis();
       }
     } else {
-      if (millis() - lastRead > 3000) break;
+      if (millis() - lastRead > 5000) break;
       delay(5);
     }
   }
 
   http.end();
-  return (int)total;
+
+  if (total == 0) {
+    free(buf);
+    return false;
+  }
+
+  *outBuf = buf;
+  *outLen = total;
+  return true;
 }
 
 bool MTAFeed::isDuplicate(const char* tripId, const char* stopId) {
@@ -153,33 +182,50 @@ bool MTAFeed::entity_cb(pb_istream_t* stream, const pb_field_t* field, void** ar
   (void)field;
   FilterCtx* ctx = (FilterCtx*)(*arg);
 
-  // First pass: decode to get trip_id
-  pb_istream_t stream_copy = *stream;
-  transit_realtime_FeedEntity ent_temp = transit_realtime_FeedEntity_init_zero;
-  
-  if (!pb_decode(&stream_copy, transit_realtime_FeedEntity_fields, &ent_temp)) {
+  /* Read the entity submessage bytes into a temp buffer so we can decode
+   * it twice from independent buffer-backed streams. Copying the
+   * pb_istream_t directly shares internal state and corrupts the stream
+   * position on the second pass, causing "invalid wire_type".
+   */
+  size_t msg_size = stream->bytes_left;
+  uint8_t* tmp = (uint8_t*)malloc(msg_size);
+  if (tmp == nullptr) return false;
+
+  if (!pb_read(stream, tmp, msg_size)) {
+    free(tmp);
     return false;
   }
 
-  // Update context with trip_id from this entity
+  // First pass: decode to get trip_id
+  transit_realtime_FeedEntity ent_temp = transit_realtime_FeedEntity_init_zero;
+  pb_istream_t bs1 = pb_istream_from_buffer(tmp, msg_size);
+  if (!pb_decode(&bs1, transit_realtime_FeedEntity_fields, &ent_temp)) {
+    free(tmp);
+    return false;
+  }
+
+  // Copy trip_id into a local buffer (ent_temp fields are stack-local)
+  static char trip_id_buf[64];
   if (ent_temp.trip_update.trip.trip_id[0] != '\0') {
-    ctx->currentTripId = ent_temp.trip_update.trip.trip_id;
+    strncpy(trip_id_buf, ent_temp.trip_update.trip.trip_id, sizeof(trip_id_buf) - 1);
+    trip_id_buf[sizeof(trip_id_buf) - 1] = '\0';
+    ctx->currentTripId = trip_id_buf;
   } else {
     ctx->currentTripId = "";
   }
 
-  // Second pass: decode with callbacks (using updated trip_id in ctx)
+  // Second pass: decode with callbacks
   transit_realtime_FeedEntity ent = transit_realtime_FeedEntity_init_zero;
   transit_realtime_TripUpdate tu = transit_realtime_TripUpdate_init_zero;
   tu.stop_time_update.funcs.decode = &MTAFeed::stop_time_update_cb;
   tu.stop_time_update.arg = ctx;
   ent.trip_update = tu;
 
-  if (!pb_decode(stream, transit_realtime_FeedEntity_fields, &ent)) {
-    return false;
-  }
+  pb_istream_t bs2 = pb_istream_from_buffer(tmp, msg_size);
+  bool ok = pb_decode(&bs2, transit_realtime_FeedEntity_fields, &ent);
 
-  return true;
+  free(tmp);
+  return ok;
 }
 
 bool MTAFeed::decodeFiltered(const uint8_t* data, size_t len, const char* stopId) {
@@ -200,14 +246,18 @@ bool MTAFeed::decodeFiltered(const uint8_t* data, size_t len, const char* stopId
 }
 
 bool MTAFeed::poll(const char* url, const char* stopId) {
-  int n = fetchFeedBytes(url, FEED_BUF, FEED_BUF_CAP);
-  if (n <= 0) {
-    Serial.print("Fetch failed: ");
-    Serial.println(n);
+  uint8_t* buf = nullptr;
+  size_t   len = 0;
+
+  if (!fetchFeedBytes(url, &buf, &len)) {
+    Serial.printf("Fetch failed (free heap: %u)\n", ESP.getFreeHeap());
     return false;
   }
 
-  return decodeFiltered(FEED_BUF, (size_t)n, stopId);
+  Serial.printf("[%u bytes, heap %u] ", (unsigned)len, ESP.getFreeHeap());
+  bool ok = decodeFiltered(buf, len, stopId);
+  free(buf);
+  return ok;
 }
 
 int MTAFeed::getArrivals(Arrival* out, int maxOut) {
